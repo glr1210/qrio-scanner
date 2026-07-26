@@ -2,8 +2,20 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Qrio — Scanner et créer des QR codes",
-  description: "Scanne, décode et crée des QR codes directement sur ton appareil. Rapide, gratuit et privé.",
+  metadataBase: new URL("https://tgappstudio.com"),
+  title: "Qrio Toolbox — 20 outils gratuits et privés",
+  description: "QR codes, sécurité, images, outils développeur et calculs rapides. Gratuit, sans compte et directement dans ton navigateur.",
+  openGraph: {
+    title: "Qrio Toolbox",
+    description: "20 outils. 100% local & privé.",
+    images: ["/og.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Qrio Toolbox",
+    description: "20 outils. 100% local & privé.",
+    images: ["/og.png"],
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

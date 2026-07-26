@@ -1,239 +1,100 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import QRCode from "qrcode";
 
-type Mode = "scan" | "create";
+type Tool = { id: string; name: string; desc: string; icon: string; cat: string; tags: string };
+const TOOLS: Tool[] = [
+  ["scan","Scanner QR","Caméra ou image, résultat instantané","⌗","QR & codes","qr caméra décoder"],
+  ["create","Créer un QR","Lien, Wi-Fi, contact, événement et paiement","▦","QR & codes","générer wifi vcard sms email epc"],
+  ["barcode","Code-barres","Lire un produit et comparer son prix","▥","QR & codes","ean produit prix"],
+  ["batch","QR en lot","Créer plusieurs QR depuis une liste","⊞","QR & codes","csv liste plusieurs"],
+  ["history","Historique local","Retrouver tes derniers scans","◴","QR & codes","favoris récent"],
+  ["url","Analyseur de lien","Repérer les liens potentiellement suspects","⌁","Sécurité","phishing url domaine"],
+  ["password","Mot de passe","Générateur robuste et personnalisable","✳","Sécurité","password aléatoire"],
+  ["hash","Empreinte SHA-256","Vérifier un texte ou un fichier","#","Sécurité","hash checksum fichier"],
+  ["cipher","Coffre de texte","Chiffrer et déchiffrer localement","◇","Sécurité","aes cryptage"],
+  ["image","Convertir une image","Compresser, redimensionner et convertir","◫","Images","jpg png webp métadonnées"],
+  ["color","Couleur d’une image","Prélever une couleur et copier son code","◉","Images","palette pipette hex"],
+  ["favicon","Créateur de favicon","Transformer une image en icône","◆","Images","icone site"],
+  ["signature","Signature","Signer à la main et exporter en PNG","〽","Images","dessin signature"],
+  ["json","Outil JSON","Formater, réduire et valider","{ }","Développeur","pretty minify"],
+  ["codec","Encodeur universel","Base64, URL et lecture de JWT","↔","Développeur","encode decode"],
+  ["uuid","Générateur UUID","Créer des identifiants uniques","✣","Développeur","guid"],
+  ["timestamp","Horodatage Unix","Convertir une date et un timestamp","◷","Développeur","epoch temps"],
+  ["units","Convertisseur","Longueur, poids et température","⇄","Calculs","unités kg km"],
+  ["split","Partager l’addition","Pourboire et montant par personne","÷","Calculs","restaurant"],
+  ["timer","Minuteur","Compte à rebours simple et précis","◒","Calculs","chronomètre"],
+].map(([id,name,desc,icon,cat,tags])=>({id,name,desc,icon,cat,tags}));
+const CATS=["Tous","QR & codes","Sécurité","Images","Développeur","Calculs"];
 
-function classify(value: string) {
-  if (/^https?:\/\//i.test(value)) return { label: "Lien web", icon: "↗" };
-  if (/^WIFI:/i.test(value)) return { label: "Réseau Wi-Fi", icon: "⌁" };
-  if (/^mailto:/i.test(value)) return { label: "E-mail", icon: "@" };
-  if (/^tel:/i.test(value)) return { label: "Téléphone", icon: "☎" };
-  return { label: "Texte", icon: "T" };
+function Panel({title,desc,children}:{title:string;desc:string;children:React.ReactNode}) {
+  return <section className="panel"><header><small>OUTIL LOCAL</small><h2>{title}</h2><p>{desc}</p></header>{children}</section>;
 }
+const save=(url:string,name:string)=>{const a=document.createElement("a");a.href=url;a.download=name;a.click()};
+const b64=(v:Uint8Array)=>{let s="";v.forEach(x=>s+=String.fromCharCode(x));return btoa(s)};
+const unb64=(v:string)=>Uint8Array.from(atob(v),x=>x.charCodeAt(0));
 
-export default function Home() {
-  const [mode, setMode] = useState<Mode>("scan");
-  const [result, setResult] = useState("");
-  const [status, setStatus] = useState("Prêt à scanner");
-  const [cameraOn, setCameraOn] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [text, setText] = useState("https://");
-  const [qrImage, setQrImage] = useState("");
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const frameRef = useRef<number | null>(null);
-
-  const stopCamera = () => {
-    if (frameRef.current) cancelAnimationFrame(frameRef.current);
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    setCameraOn(false);
-  };
-
-  useEffect(() => () => stopCamera(), []);
-
-  const decodeCanvas = (canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return false;
-    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(image.data, image.width, image.height, {
-      inversionAttempts: "attemptBoth",
-    });
-    if (!code) return false;
-    setResult(code.data);
-    setStatus("QR code décodé");
-    stopCamera();
-    return true;
-  };
-
-  const scanFrame = () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) {
-      frameRef.current = requestAnimationFrame(scanFrame);
-      return;
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
-    if (!decodeCanvas(canvas)) frameRef.current = requestAnimationFrame(scanFrame);
-  };
-
-  const startCamera = async () => {
-    try {
-      setStatus("Autorisation de la caméra…");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      setCameraOn(true);
-      setStatus("Place le QR dans le cadre");
-      requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().then(scanFrame);
-        }
-      });
-    } catch {
-      setStatus("Caméra indisponible — essaie avec une image");
-    }
-  };
-
-  const readFile = (file?: File) => {
-    if (!file || !file.type.startsWith("image/")) {
-      setStatus("Choisis une image PNG, JPG ou WEBP");
-      return;
-    }
-    const image = new Image();
-    image.onload = () => {
-      const max = 1800;
-      const scale = Math.min(1, max / Math.max(image.width, image.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(image.width * scale);
-      canvas.height = Math.round(image.height * scale);
-      canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-      if (!decodeCanvas(canvas)) setStatus("Aucun QR code trouvé dans cette image");
-      URL.revokeObjectURL(image.src);
-    };
-    image.src = URL.createObjectURL(file);
-    setStatus("Analyse de l’image…");
-  };
-
-  const generate = async () => {
-    if (!text.trim()) return;
-    setQrImage(
-      await QRCode.toDataURL(text.trim(), {
-        width: 720,
-        margin: 2,
-        errorCorrectionLevel: "H",
-        color: { dark: "#0b1020", light: "#ffffff" },
-      }),
-    );
-  };
-
-  const copy = async () => {
-    await navigator.clipboard.writeText(result);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  };
-
-  const info = classify(result);
-
-  return (
-    <main>
-      <nav className="nav">
-        <a className="brand" href="#" aria-label="Qrio accueil">
-          <span className="brandMark" aria-hidden="true"><i /><i /><i /></span>
-          <span>Qrio</span>
-        </a>
-        <span className="privacy"><i /> 100% local &amp; privé</span>
-      </nav>
-
-      <section className="hero">
-        <p className="eyebrow"><span>✦</span> LE QR, SANS FRICTION</p>
-        <h1>Scanne. Décode.<br /><em>C’est fait.</em></h1>
-        <p className="lede">Lis n’importe quel QR code en une seconde — depuis ta caméra ou une image. Rien ne quitte ton appareil.</p>
-      </section>
-
-      <section className="workspace">
-        <div className="tabs" role="tablist">
-          <button className={mode === "scan" ? "active" : ""} onClick={() => setMode("scan")}>⌗ Scanner</button>
-          <button className={mode === "create" ? "active" : ""} onClick={() => { stopCamera(); setMode("create"); }}>＋ Créer</button>
+export default function Home(){
+  const [active,setActive]=useState("scan"),[cat,setCat]=useState("Tous"),[query,setQuery]=useState("");
+  const [favorites,setFavorites]=useState<string[]>([]),[history,setHistory]=useState<string[]>([]);
+  useEffect(()=>{setFavorites(JSON.parse(localStorage.getItem("qrio-favorites")||"[]"));setHistory(JSON.parse(localStorage.getItem("qrio-history")||"[]"))},[]);
+  const filtered=useMemo(()=>TOOLS.filter(t=>(cat==="Tous"||t.cat===cat)&&`${t.name} ${t.desc} ${t.tags}`.toLowerCase().includes(query.toLowerCase())),[cat,query]);
+  const favorite=(id:string)=>{const n=favorites.includes(id)?favorites.filter(x=>x!==id):[...favorites,id];setFavorites(n);localStorage.setItem("qrio-favorites",JSON.stringify(n))};
+  const remember=(v:string)=>{const n=[v,...history.filter(x=>x!==v)].slice(0,30);setHistory(n);localStorage.setItem("qrio-history",JSON.stringify(n))};
+  return <main>
+    <nav><a className="brand" href="#"><i>▦</i>Qrio</a><div><a href="#tools">Outils</a><span>● Local & privé</span></div></nav>
+    <section className="hero"><small>✦ TA BOÎTE À OUTILS NUMÉRIQUE</small><h1>Un outil pour chaque<br/><em>petit problème.</em></h1><p>QR codes, sécurité, images, développement et calculs rapides. Gratuit, sans compte et directement dans ton navigateur.</p><div><b>20</b> outils <b>0</b> donnée envoyée <b>100%</b> gratuit</div></section>
+    <section className="toolbox" id="tools">
+      <aside><label>⌕ <input aria-label="Rechercher" placeholder="Rechercher un outil…" value={query} onChange={e=>setQuery(e.target.value)}/></label>{CATS.map(c=><button className={cat===c?"on":""} key={c} onClick={()=>setCat(c)}>{c}<small>{c==="Tous"?20:TOOLS.filter(t=>t.cat===c).length}</small></button>)}</aside>
+      <div className="content"><div className="grid">{filtered.map(t=><article key={t.id} className={active===t.id?"selected":""} onClick={()=>{setActive(t.id);setTimeout(()=>document.querySelector(".activeTool")?.scrollIntoView({behavior:"smooth"}),20)}}><button className="star" onClick={e=>{e.stopPropagation();favorite(t.id)}}>{favorites.includes(t.id)?"★":"☆"}</button><i>{t.icon}</i><small>{t.cat}</small><h3>{t.name}</h3><p>{t.desc}</p><b>Ouvrir →</b></article>)}</div>
+        <div className="activeTool">
+          {active==="scan"&&<Scanner done={remember}/>} {active==="create"&&<Creator/>} {active==="batch"&&<Batch/>}
+          {active==="barcode"&&<Barcode/>} {active==="history"&&<History items={history} clear={()=>{setHistory([]);localStorage.removeItem("qrio-history")}}/>}
+          {active==="url"&&<UrlCheck/>} {active==="password"&&<Password/>} {active==="hash"&&<Hash/>} {active==="cipher"&&<Cipher/>}
+          {["image","color","favicon"].includes(active)&&<ImageTool mode={active}/>} {active==="signature"&&<Signature/>}
+          {active==="json"&&<JsonTool/>} {active==="codec"&&<Codec/>} {active==="uuid"&&<Uuid/>} {active==="timestamp"&&<Timestamp/>}
+          {active==="units"&&<Units/>} {active==="split"&&<Split/>} {active==="timer"&&<Timer/>}
         </div>
-
-        {mode === "scan" ? (
-          <div className="scanGrid">
-            <div className="scanner">
-              <div className={`viewport ${cameraOn ? "live" : ""}`}>
-                <video ref={videoRef} muted playsInline />
-                <div className="scanCorners"><i /><i /><i /><i /></div>
-                {!cameraOn && (
-                  <div className="cameraPrompt">
-                    <span className="cameraIcon">⌾</span>
-                    <strong>Scanner avec la caméra</strong>
-                    <small>Rapide, sécurisé, instantané</small>
-                    <button onClick={startCamera}>Activer la caméra <b>→</b></button>
-                  </div>
-                )}
-                {cameraOn && <button className="stop" onClick={stopCamera}>Arrêter</button>}
-              </div>
-
-              <div className="or"><span /> ou <span /></div>
-
-              <button
-                className={`dropzone ${dragging ? "dragging" : ""}`}
-                onClick={() => fileRef.current?.click()}
-                onDragOver={(e: DragEvent) => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(e: DragEvent) => { e.preventDefault(); setDragging(false); readFile(e.dataTransfer.files[0]); }}
-              >
-                <span>⇧</span>
-                <strong>Dépose une image ici</strong>
-                <small>ou clique pour parcourir · PNG, JPG, WEBP</small>
-              </button>
-              <input ref={fileRef} hidden type="file" accept="image/*" onChange={(e: ChangeEvent<HTMLInputElement>) => readFile(e.target.files?.[0])} />
-              <p className="status">{status}</p>
-            </div>
-
-            <aside className={`result ${result ? "hasResult" : ""}`}>
-              <div className="resultTitle"><span>Résultat</span>{result && <button onClick={() => setResult("")}>Effacer</button>}</div>
-              {!result ? (
-                <div className="empty">
-                  <div className="emptyQr"><i /><i /><i /></div>
-                  <strong>En attente d’un QR</strong>
-                  <p>Le contenu décodé apparaîtra ici, prêt à être copié ou ouvert.</p>
-                </div>
-              ) : (
-                <div className="decoded">
-                  <div className="type"><span>{info.icon}</span><div><small>TYPE DÉTECTÉ</small><strong>{info.label}</strong></div></div>
-                  <div className="payload">{result}</div>
-                  <div className="actions">
-                    <button onClick={copy}>{copied ? "✓ Copié" : "□ Copier"}</button>
-                    {/^https?:\/\//i.test(result) && <a href={result} target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>}
-                  </div>
-                  <p className="safe">✓ Décodé localement sur ton appareil</p>
-                </div>
-              )}
-            </aside>
-          </div>
-        ) : (
-          <div className="creator">
-            <div className="createForm">
-              <label htmlFor="qrText">Contenu du QR code</label>
-              <textarea id="qrText" value={text} onChange={(e) => setText(e.target.value)} placeholder="Lien, texte, e-mail, numéro…" />
-              <div className="quickTypes">
-                <button onClick={() => setText("https://")}>Lien</button>
-                <button onClick={() => setText("WIFI:T:WPA;S:NomDuWifi;P:MotDePasse;;")}>Wi-Fi</button>
-                <button onClick={() => setText("mailto:bonjour@exemple.com")}>E-mail</button>
-                <button onClick={() => setText("tel:+32")}>Téléphone</button>
-              </div>
-              <button className="generate" onClick={generate}>Générer le QR <b>→</b></button>
-            </div>
-            <div className="qrPreview">
-              {qrImage ? (
-                <>
-                  <img src={qrImage} alt="QR code généré" />
-                  <a href={qrImage} download="mon-qr-code.png">Télécharger en PNG ↓</a>
-                </>
-              ) : (
-                <div className="empty">
-                  <div className="emptyQr"><i /><i /><i /></div>
-                  <strong>Ton QR apparaîtra ici</strong>
-                  <p>Il sera généré localement, en haute définition.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-
-      <footer><span>Qrio — simple, rapide, privé.</span><span>Aucune donnée collectée · Aucun compte</span></footer>
-    </main>
-  );
+      </div>
+    </section>
+    <footer><b>Qrio Toolbox</b><span>Tout se passe sur ton appareil · Aucun compte · Aucune publicité</span></footer>
+  </main>
 }
+
+function Scanner({done}:{done:(v:string)=>void}){
+  const [result,setResult]=useState(""),[status,setStatus]=useState("Prêt à scanner"),[live,setLive]=useState(false),[drag,setDrag]=useState(false);
+  const video=useRef<HTMLVideoElement>(null),stream=useRef<MediaStream|null>(null),frame=useRef<number|null>(null),file=useRef<HTMLInputElement>(null);
+  const stop=()=>{if(frame.current)cancelAnimationFrame(frame.current);stream.current?.getTracks().forEach(t=>t.stop());setLive(false)};
+  useEffect(()=>()=>stop(),[]);
+  const decode=(c:HTMLCanvasElement)=>{const x=c.getContext("2d",{willReadFrequently:true});if(!x)return false;const im=x.getImageData(0,0,c.width,c.height),code=jsQR(im.data,im.width,im.height,{inversionAttempts:"attemptBoth"});if(!code)return false;setResult(code.data);done(code.data);setStatus("QR décodé");stop();return true};
+  const loop=()=>{const v=video.current;if(!v||v.readyState<2){frame.current=requestAnimationFrame(loop);return}const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;c.getContext("2d")?.drawImage(v,0,0);if(!decode(c))frame.current=requestAnimationFrame(loop)};
+  const start=async()=>{try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});stream.current=s;setLive(true);setStatus("Place le QR dans le cadre");requestAnimationFrame(()=>{if(video.current){video.current.srcObject=s;video.current.play().then(loop)}})}catch{setStatus("Caméra indisponible — utilise une image")}};
+  const read=(f?:File)=>{if(!f?.type.startsWith("image/"))return;const im=new Image();im.onload=()=>{const c=document.createElement("canvas"),s=Math.min(1,1800/Math.max(im.width,im.height));c.width=im.width*s;c.height=im.height*s;c.getContext("2d")?.drawImage(im,0,0,c.width,c.height);if(!decode(c))setStatus("Aucun QR trouvé");URL.revokeObjectURL(im.src)};im.src=URL.createObjectURL(f);setStatus("Analyse…")};
+  return <Panel title="Scanner un QR code" desc="Caméra ou image. Rien ne quitte ton appareil."><div className="cols"><div><div className={`camera ${live?"live":""}`}><video ref={video} muted playsInline/><span>⌗</span>{!live?<button onClick={start}>Activer la caméra</button>:<button onClick={stop}>Arrêter</button>}</div><button className={drag?"drop drag":"drop"} onClick={()=>file.current?.click()} onDragOver={(e:DragEvent)=>{e.preventDefault();setDrag(true)}} onDragLeave={()=>setDrag(false)} onDrop={(e:DragEvent)=>{e.preventDefault();setDrag(false);read(e.dataTransfer.files[0])}}>⇧ Dépose une image ou clique ici</button><input hidden ref={file} type="file" accept="image/*" onChange={(e:ChangeEvent<HTMLInputElement>)=>read(e.target.files?.[0])}/><p className="hint">{status}</p></div><div className="result">{result?<><label>CONTENU DÉCODÉ</label><pre>{result}</pre><div className="buttons"><button onClick={()=>navigator.clipboard.writeText(result)}>Copier</button>{/^https?:\/\//i.test(result)&&<a href={result} target="_blank">Ouvrir ↗</a>}</div></>:<div className="empty"><b>⌗</b><strong>En attente d’un QR</strong></div>}</div></div></Panel>
+}
+
+function Creator(){
+  const presets:Record<string,string>={Lien:"https://","Wi-Fi":"WIFI:T:WPA;S:NomDuWifi;P:MotDePasse;;",Contact:"BEGIN:VCARD\nVERSION:3.0\nFN:Prénom Nom\nTEL:+32\nEMAIL:bonjour@exemple.com\nEND:VCARD","E-mail":"mailto:bonjour@exemple.com?subject=Bonjour",SMS:"SMSTO:+32:Bonjour",Événement:"BEGIN:VEVENT\nSUMMARY:Mon événement\nDTSTART:20260801T120000Z\nEND:VEVENT",Paiement:"BCD\n002\n1\nSCT\nBIC\nNOM\nBE00000000000000\nEUR10.00"};
+  const [value,setValue]=useState("https://"),[qr,setQr]=useState("");
+  return <Panel title="Créer un QR code" desc="Lien, Wi-Fi, contact, message, événement ou paiement EPC."><div className="cols"><div className="form"><div className="chips">{Object.entries(presets).map(([k,v])=><button key={k} onClick={()=>setValue(v)}>{k}</button>)}</div><textarea value={value} onChange={e=>setValue(e.target.value)}/><button className="primary" onClick={async()=>setQr(await QRCode.toDataURL(value,{width:900,margin:2,errorCorrectionLevel:"H"}))}>Générer le QR →</button></div><div className="result">{qr?<><img className="qr" src={qr} alt="QR généré"/><button onClick={()=>save(qr,"qrio-code.png")}>Télécharger PNG</button></>:<div className="empty"><b>▦</b><strong>Ton QR apparaîtra ici</strong></div>}</div></div></Panel>
+}
+
+function Batch(){const [text,setText]=useState("https://tgappstudio.com\nBonjour"),[items,setItems]=useState<{t:string;u:string}[]>([]);return <Panel title="QR en lot" desc="Une ligne égale un QR, jusqu’à 30 codes."><div className="form"><textarea value={text} onChange={e=>setText(e.target.value)}/><button className="primary" onClick={async()=>{const v=text.split("\n").filter(Boolean).slice(0,30);setItems(await Promise.all(v.map(async t=>({t,u:await QRCode.toDataURL(t,{width:500})}))))}}>Générer la série</button></div><div className="batch">{items.map((x,i)=><button key={i} onClick={()=>save(x.u,`qr-${i+1}.png`)}><img src={x.u} alt=""/><span>{x.t}</span></button>)}</div></Panel>}
+function Barcode(){const [value,setValue]=useState(""),[msg,setMsg]=useState("Importe une image ou saisis le code.");const scan=async(f?:File)=>{try{if(!f)return;const D=(window as unknown as {BarcodeDetector:new(o:{formats:string[]})=>{detect:(b:ImageBitmap)=>Promise<{rawValue:string}[]>}}).BarcodeDetector;const r=await new D({formats:["ean_13","ean_8","upc_a","code_128"]}).detect(await createImageBitmap(f));if(r[0])setValue(r[0].rawValue);else setMsg("Aucun code trouvé")}catch{setMsg("Lecture automatique non disponible sur ce navigateur.")}};return <Panel title="Lecteur de code-barres" desc="Lis un produit puis compare rapidement les prix."><div className="form narrow"><input type="file" accept="image/*" onChange={e=>scan(e.target.files?.[0])}/><input value={value} onChange={e=>setValue(e.target.value)} placeholder="Code EAN"/><p className="hint">{msg}</p><div className="buttons"><a target="_blank" href={`https://www.google.com/search?tbm=shop&q=${value}`}>Google Shopping</a><a target="_blank" href={`https://www.amazon.fr/s?k=${value}`}>Amazon</a></div></div></Panel>}
+function History({items,clear}:{items:string[];clear:()=>void}){return <Panel title="Historique local" desc="Tes 30 derniers scans restent uniquement dans ce navigateur."><div className="listTop">{items.length} élément(s)<button onClick={clear}>Tout effacer</button></div><div className="history">{items.map((x,i)=><div key={i}><span>{x}</span><button onClick={()=>navigator.clipboard.writeText(x)}>Copier</button></div>)}</div></Panel>}
+function UrlCheck(){const [v,setV]=useState("https://");const r=useMemo(()=>{try{const u=new URL(v),f=[];if(u.protocol!=="https:")f.push("Pas de HTTPS");if(/xn--/.test(u.hostname))f.push("Caractères internationaux encodés");if(/\d+\.\d+\.\d+\.\d+/.test(u.hostname))f.push("Adresse IP utilisée");if((u.hostname.match(/-/g)||[]).length>3)f.push("Beaucoup de tirets");return {host:u.hostname,f}}catch{return null}},[v]);return <Panel title="Analyseur de lien" desc="Contrôle rapide avant d’ouvrir une adresse inconnue."><div className="form narrow"><input value={v} onChange={e=>setV(e.target.value)}/>{r&&<div className={`audit ${r.f.length?"warn":"good"}`}><b>{r.f.length?"Prudence recommandée":"Aucun signal évident"}</b><span>Domaine : {r.host}</span>{r.f.map(x=><span key={x}>• {x}</span>)}</div>}</div></Panel>}
+function Password(){const [len,setLen]=useState(20),[v,setV]=useState("");const make=()=>{const c="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*+-_",a=crypto.getRandomValues(new Uint32Array(len));setV(Array.from(a,x=>c[x%c.length]).join(""))};useEffect(make,[len]);return <Panel title="Générateur de mot de passe" desc="Aléatoire cryptographique, créé localement."><div className="form narrow"><div className="big">{v}<button onClick={()=>navigator.clipboard.writeText(v)}>Copier</button></div><label>LONGUEUR : {len}</label><input type="range" min="8" max="64" value={len} onChange={e=>setLen(+e.target.value)}/><button className="primary" onClick={make}>Nouveau mot de passe</button></div></Panel>}
+function Hash(){const [v,setV]=useState(""),[out,setOut]=useState("");const run=async(b:ArrayBuffer)=>setOut(Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",b)),x=>x.toString(16).padStart(2,"0")).join(""));return <Panel title="Empreinte SHA-256" desc="Vérifie un texte ou un fichier sans l’envoyer."><div className="form"><textarea value={v} onChange={e=>setV(e.target.value)} placeholder="Texte…"/><input type="file" onChange={async e=>{const f=e.target.files?.[0];if(f)run(await f.arrayBuffer())}}/><button className="primary" onClick={()=>run(new TextEncoder().encode(v).buffer)}>Calculer</button>{out&&<pre>{out}</pre>}</div></Panel>}
+function Cipher(){const [text,setText]=useState(""),[pass,setPass]=useState(""),[out,setOut]=useState("");const key=async(s:Uint8Array)=>crypto.subtle.deriveKey({name:"PBKDF2",salt:s as BufferSource,iterations:150000,hash:"SHA-256"},await crypto.subtle.importKey("raw",new TextEncoder().encode(pass),"PBKDF2",false,["deriveKey"]),{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);const enc=async()=>{try{const s=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),d=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},await key(s),new TextEncoder().encode(text)));setOut(`QRIO1.${b64(s)}.${b64(iv)}.${b64(d)}`)}catch{setOut("Erreur")}};const dec=async()=>{try{const [,s,iv,d]=text.split(".");setOut(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(iv) as BufferSource},await key(unb64(s)),unb64(d) as BufferSource)))}catch{setOut("Mot de passe ou contenu incorrect.")}};return <Panel title="Coffre de texte" desc="Chiffrement AES-GCM protégé par ton mot de passe."><div className="form"><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Texte ou contenu QRIO1…"/><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mot de passe"/><div className="buttons"><button onClick={enc}>Chiffrer</button><button onClick={dec}>Déchiffrer</button></div>{out&&<pre>{out}</pre>}</div></Panel>}
+
+function ImageTool({mode}:{mode:string}){const [img,setImg]=useState<HTMLImageElement|null>(null),[url,setUrl]=useState(""),[width,setWidth]=useState(1200),[quality,setQuality]=useState(.82),[format,setFormat]=useState("image/webp"),[color,setColor]=useState("#7057e8");const load=(f?:File)=>{if(!f)return;const i=new Image();i.onload=()=>{setImg(i);setUrl(i.src);setWidth(Math.min(1200,i.width))};i.src=URL.createObjectURL(f)};const render=(square=false)=>{if(!img)return;const c=document.createElement("canvas"),w=square?512:width,h=square?512:Math.round(img.height*w/img.width);c.width=w;c.height=h;const x=c.getContext("2d")!;if(square){const s=Math.min(img.width,img.height);x.drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,w,h)}else x.drawImage(img,0,0,w,h);save(c.toDataURL(square?"image/png":format,quality),square?"favicon.png":`image.${format.split("/")[1]}`)};const pick=(e:React.MouseEvent<HTMLImageElement>)=>{if(!img)return;const r=e.currentTarget.getBoundingClientRect(),c=document.createElement("canvas");c.width=img.width;c.height=img.height;const x=c.getContext("2d")!;x.drawImage(img,0,0);const p=x.getImageData((e.clientX-r.left)/r.width*img.width,(e.clientY-r.top)/r.height*img.height,1,1).data;setColor("#"+[p[0],p[1],p[2]].map(n=>n.toString(16).padStart(2,"0")).join(""))};return <Panel title={mode==="image"?"Convertir et compresser":mode==="color"?"Prélever une couleur":"Créer un favicon"} desc="L’image est traitée sur ton appareil et ses métadonnées sont supprimées."><div className="cols"><div className="form"><input type="file" accept="image/*" onChange={e=>load(e.target.files?.[0])}/>{mode==="image"&&<><label>LARGEUR : {width}px</label><input type="range" min="128" max="2400" value={width} onChange={e=>setWidth(+e.target.value)}/><label>QUALITÉ : {Math.round(quality*100)}%</label><input type="range" min=".2" max="1" step=".05" value={quality} onChange={e=>setQuality(+e.target.value)}/><select value={format} onChange={e=>setFormat(e.target.value)}><option value="image/webp">WebP</option><option value="image/jpeg">JPG</option><option value="image/png">PNG</option></select><button className="primary" onClick={()=>render()}>Convertir</button></>}{mode==="favicon"&&<button className="primary" onClick={()=>render(true)}>Créer l’icône 512 × 512</button>}{mode==="color"&&<><div className="color" style={{background:color}}>{color}</div><button onClick={()=>navigator.clipboard.writeText(color)}>Copier</button></>}</div><div className="result">{url?<img className="preview" src={url} alt="Aperçu" onClick={pick}/>:<div className="empty"><b>◫</b><strong>Choisis une image</strong></div>}</div></div></Panel>}
+function Signature(){const ref=useRef<HTMLCanvasElement>(null),draw=useRef(false);const p=(e:React.PointerEvent<HTMLCanvasElement>)=>{const r=e.currentTarget.getBoundingClientRect();return{x:(e.clientX-r.left)*900/r.width,y:(e.clientY-r.top)*300/r.height}};return <Panel title="Signature manuscrite" desc="Dessine au doigt, à la souris ou au stylet."><canvas ref={ref} width="900" height="300" onPointerDown={e=>{draw.current=true;const x=ref.current!.getContext("2d")!,q=p(e);x.beginPath();x.moveTo(q.x,q.y)}} onPointerMove={e=>{if(!draw.current)return;const x=ref.current!.getContext("2d")!,q=p(e);x.lineWidth=5;x.lineCap="round";x.lineTo(q.x,q.y);x.stroke()}} onPointerUp={()=>draw.current=false}/><div className="buttons center"><button onClick={()=>ref.current?.getContext("2d")?.clearRect(0,0,900,300)}>Effacer</button><button onClick={()=>ref.current&&save(ref.current.toDataURL(),"signature.png")}>Télécharger PNG</button></div></Panel>}
+function JsonTool(){const [v,setV]=useState('{"nom":"Qrio","prive":true}'),[s,setS]=useState("");const go=(min=false)=>{try{setV(JSON.stringify(JSON.parse(v),null,min?0:2));setS("JSON valide ✓")}catch(e){setS(`Erreur : ${(e as Error).message}`)}};return <Panel title="Outil JSON" desc="Formate, réduit et valide instantanément."><div className="form"><textarea value={v} onChange={e=>setV(e.target.value)}/><div className="buttons"><button onClick={()=>go()}>Formater</button><button onClick={()=>go(true)}>Réduire</button><button onClick={()=>navigator.clipboard.writeText(v)}>Copier</button></div><p className="hint">{s}</p></div></Panel>}
+function Codec(){const [v,setV]=useState(""),[out,setOut]=useState(""),[mode,setMode]=useState("Base64");const enc=()=>{try{setOut(mode==="Base64"?btoa(unescape(encodeURIComponent(v))):encodeURIComponent(v))}catch{setOut("Format invalide")}};const dec=()=>{try{if(mode==="JWT"){const p=v.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");setOut(JSON.stringify(JSON.parse(decodeURIComponent(escape(atob(p)))),null,2))}else setOut(mode==="Base64"?decodeURIComponent(escape(atob(v))):decodeURIComponent(v))}catch{setOut("Format invalide")}};return <Panel title="Encodeur universel" desc="Base64, URL et lecture du contenu public d’un JWT."><div className="form"><div className="chips">{["Base64","URL","JWT"].map(x=><button key={x} onClick={()=>setMode(x)}>{x}</button>)}</div><textarea value={v} onChange={e=>setV(e.target.value)}/><div className="buttons">{mode!=="JWT"&&<button onClick={enc}>Encoder</button>}<button onClick={dec}>Décoder</button></div>{out&&<pre>{out}</pre>}</div></Panel>}
+function Uuid(){const [n,setN]=useState(5),[out,setOut]=useState([crypto.randomUUID()]);return <Panel title="Générateur UUID v4" desc="Jusqu’à 25 identifiants uniques."><div className="form narrow"><input type="number" min="1" max="25" value={n} onChange={e=>setN(+e.target.value)}/><button className="primary" onClick={()=>setOut(Array.from({length:Math.min(25,n)},()=>crypto.randomUUID()))}>Générer</button><pre>{out.join("\n")}</pre><button onClick={()=>navigator.clipboard.writeText(out.join("\n"))}>Tout copier</button></div></Panel>}
+function Timestamp(){const [t,setT]=useState(Math.floor(Date.now()/1000)),[d,setD]=useState(new Date().toISOString().slice(0,16));return <Panel title="Horodatage Unix" desc="Convertis une date en timestamp, et inversement."><div className="cols"><div className="form"><label>TIMESTAMP</label><input type="number" value={t} onChange={e=>setT(+e.target.value)}/><div className="big">{new Date(t*1000).toLocaleString("fr-BE")}</div></div><div className="form"><label>DATE</label><input type="datetime-local" value={d} onChange={e=>setD(e.target.value)}/><div className="big">{Math.floor(new Date(d).getTime()/1000)}</div></div></div></Panel>}
+function Units(){const [kind,setKind]=useState("Longueur"),[v,setV]=useState(1);const out=kind==="Longueur"?`${v*1000} m · ${(v*.621371).toFixed(3)} mi`:kind==="Poids"?`${v*1000} g · ${(v*2.20462).toFixed(3)} lb`:`${(v*9/5+32).toFixed(1)} °F · ${(v+273.15).toFixed(1)} K`;return <Panel title="Convertisseur d’unités" desc="Longueur, poids et température."><div className="form narrow"><div className="chips">{["Longueur","Poids","Température"].map(x=><button key={x} onClick={()=>setKind(x)}>{x}</button>)}</div><input type="number" value={v} onChange={e=>setV(+e.target.value)}/><div className="big">{out}</div></div></Panel>}
+function Split(){const [bill,setBill]=useState(80),[people,setPeople]=useState(2),[tip,setTip]=useState(10),total=bill*(1+tip/100);return <Panel title="Partager l’addition" desc="Pourboire et montant par personne."><div className="form narrow"><label>ADDITION (€)</label><input type="number" value={bill} onChange={e=>setBill(+e.target.value)}/><label>PERSONNES</label><input type="number" min="1" value={people} onChange={e=>setPeople(+e.target.value)}/><label>POURBOIRE : {tip}%</label><input type="range" min="0" max="30" value={tip} onChange={e=>setTip(+e.target.value)}/><div className="big">{(total/Math.max(1,people)).toFixed(2)} € / personne</div></div></Panel>}
+function Timer(){const [s,setS]=useState(300),[run,setRun]=useState(false);useEffect(()=>{if(!run||s<=0)return;const id=setInterval(()=>setS(x=>x-1),1000);return()=>clearInterval(id)},[run,s]);return <Panel title="Minuteur" desc="Compte à rebours simple et précis."><div className="timer">{Math.floor(s/60).toString().padStart(2,"0")}:{(s%60).toString().padStart(2,"0")}</div><div className="buttons center"><button onClick={()=>setRun(!run)}>{run?"Pause":"Démarrer"}</button>{[300,600,1500].map(x=><button key={x} onClick={()=>{setRun(false);setS(x)}}>{x/60} min</button>)}</div></Panel>}
