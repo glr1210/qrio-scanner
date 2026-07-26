@@ -1,4 +1,4 @@
-const CACHE = "qrio-mobile-v1";
+const CACHE = "qrio-mobile-v3";
 const CORE = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {

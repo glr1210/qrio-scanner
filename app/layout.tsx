@@ -3,17 +3,17 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://tgappstudio.com"),
-  title: "Qrio Toolbox — 30 outils gratuits et privés",
+  title: "Qrio Toolbox — 31 outils gratuits et privés",
   description: "QR codes, documents, sécurité, images, outils professionnels et calculs rapides. Gratuit, sans compte et directement dans ton navigateur.",
   openGraph: {
     title: "Qrio Toolbox",
-    description: "30 outils. 100% local & privé.",
+    description: "31 outils. 100% local & privé.",
     images: ["/og.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "Qrio Toolbox",
-    description: "30 outils. 100% local & privé.",
+    description: "31 outils. 100% local & privé.",
     images: ["/og.png"],
   },
   manifest: "/manifest.webmanifest",
