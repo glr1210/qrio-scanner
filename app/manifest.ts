@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Qrio Toolbox",
     short_name: "Qrio",
-    description: "20 outils gratuits, locaux et privés.",
+    description: "30 outils gratuits, locaux et privés.",
     start_url: "/",
     display: "standalone",
     background_color: "#f4f1e9",
